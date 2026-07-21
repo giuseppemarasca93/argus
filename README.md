@@ -22,7 +22,7 @@ Entro la prima iterazione Argus deve:
 
 ## Stato
 
-MVP 0.1 operativo: raccolta RSS configurabile, archivio SQLite deduplicato e report giornaliero Markdown.
+Milestone 0.2 operativo: raccolta RSS configurabile, archivio SQLite deduplicato, estrazione deterministica di evidenze e report Markdown.
 
 ## Requisiti
 
@@ -44,12 +44,28 @@ Eseguire dalla root del repository:
 
 ```bash
 python -m argus collect
+python -m argus extract
+python -m argus evidence-report
 python -m argus report
 ```
 
 Il client HTTP usa lo User-Agent `Argus/0.1` e un timeout di 15 secondi. Il timeout può essere modificato, per esempio con `python -m argus collect --timeout 30`.
 
 La raccolta salva gli articoli in `data/argus.db`; il report crea `reports/YYYY-MM-DD.md` con gli articoli acquisiti in quel giorno. L'URL canonico dell'articolo è univoco: fragment e parametri di tracking comuni vengono rimossi, mentre gli altri parametri sono conservati e ordinati. Raccolte successive non producono duplicati.
+
+`extract` analizza titolo e summary con le regole configurabili in `extraction_rules.yaml`. Produce evidenze di tipo topic, company, technology, problem e market signal, sempre collegate all'articolo originale. L'estrazione è interamente rule-based e non usa AI generativa: i risultati sono segnali da verificare, non verità assolute.
+
+La confidence è deterministica: `0.9` per una frase canonica esatta, `0.8` per un sinonimo configurato e `0.7` per una keyword canonica singola. `value` conserva il testo incontrato, mentre `normalized_value` contiene il valore canonico definito nelle regole.
+
+Il comando è idempotente e, normalmente, ignora gli articoli già processati. Sono disponibili:
+
+```bash
+python -m argus extract --limit 50
+python -m argus extract --rules extraction_rules.yaml --force
+python -m argus evidence-report --output reports/evidence.md
+```
+
+`--force` ricalcola esclusivamente le evidenze prodotte dall'extractor deterministico `rules-v1`; eventuali evidenze di altri extractor restano intatte. L'evidence report mostra conteggi, valori più frequenti e fino a cinque articoli collegati per valore.
 
 Percorsi e data possono essere personalizzati:
 

@@ -12,3 +12,13 @@ class Article:
     summary: str | None
     collected_at: str
 
+
+@dataclass(frozen=True)
+class Evidence:
+    article_id: int
+    evidence_type: str
+    value: str
+    normalized_value: str
+    confidence: float
+    extractor: str
+    created_at: str

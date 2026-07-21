@@ -5,9 +5,20 @@ import re
 from datetime import datetime, timezone
 from html import unescape
 from html.parser import HTMLParser
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .models import Article
+
+
+TRACKING_PARAMETERS = {
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "fbclid",
+    "gclid",
+}
 
 
 class _TextExtractor(HTMLParser):
@@ -33,7 +44,15 @@ def _url(value: object) -> str:
     if not raw:
         return ""
     parts = urlsplit(raw)
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, ""))
+    query = [
+        (key, query_value)
+        for key, query_value in parse_qsl(parts.query, keep_blank_values=True)
+        if key.lower() not in TRACKING_PARAMETERS
+    ]
+    query.sort()
+    return urlunsplit(
+        (parts.scheme.lower(), parts.netloc.lower(), parts.path, urlencode(query, doseq=True), "")
+    )
 
 
 def _published_at(entry: object) -> str | None:
@@ -69,4 +88,3 @@ def normalize_article(
         summary=_text(entry.get("summary") or entry.get("description")),
         collected_at=now.astimezone(timezone.utc).isoformat(),
     )
-

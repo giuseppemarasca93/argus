@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import feedparser
 
 from .database import ArticleStore
+from .http import HttpClient
 from .normalize import normalize_article
 
 LOGGER = logging.getLogger(__name__)
@@ -20,35 +21,40 @@ class CollectionResult:
     failed_sources: int = 0
 
 
-def collect(sources: list[dict[str, str]], store: ArticleStore) -> CollectionResult:
+def collect(
+    sources: list[dict[str, str]],
+    store: ArticleStore,
+    http_client: HttpClient | None = None,
+) -> CollectionResult:
     result = CollectionResult()
+    client = http_client or HttpClient()
     store.initialize()
 
     for source in sources:
         name, url = source["name"], source["url"]
         try:
             LOGGER.info("Raccolta da %s", name)
-            feed = feedparser.parse(url)
+            feed = feedparser.parse(client.fetch(url))
             if feed.bozo and not feed.entries:
                 raise RuntimeError(str(feed.bozo_exception))
 
-            source_added = 0
             collected_at = datetime.now(timezone.utc)
+            articles = []
             for entry in feed.entries:
                 result.found += 1
                 article = normalize_article(entry, name, url, collected_at)
                 if article is None:
                     result.skipped += 1
                     LOGGER.warning("Articolo senza titolo o URL ignorato da %s", name)
-                elif store.add(article):
-                    result.added += 1
-                    source_added += 1
                 else:
-                    result.skipped += 1
-            LOGGER.info("%s: %d articoli nuovi su %d", name, source_added, len(feed.entries))
+                    articles.append(article)
+
+            added, duplicates = store.add_many(articles)
+            result.added += added
+            result.skipped += duplicates
+            LOGGER.info("%s: %d nuovi, %d duplicati su %d", name, added, duplicates, len(feed.entries))
         except Exception as exc:
             result.failed_sources += 1
             LOGGER.error("Fonte %s non raccolta: %s", name, exc)
 
     return result
-

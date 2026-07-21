@@ -8,6 +8,7 @@ from pathlib import Path
 from .collector import collect
 from .config import load_sources
 from .database import ArticleStore
+from .http import HttpClient
 from .report import generate_report
 
 
@@ -18,6 +19,7 @@ def parser() -> argparse.ArgumentParser:
 
     collect_command = commands.add_parser("collect", help="Raccoglie gli articoli dai feed")
     collect_command.add_argument("--sources", default="sources.yaml", help="File YAML delle fonti")
+    collect_command.add_argument("--timeout", type=float, default=15, help="Timeout HTTP in secondi")
 
     report_command = commands.add_parser("report", help="Genera il report Markdown giornaliero")
     report_command.add_argument("--date", type=date.fromisoformat, help="Data YYYY-MM-DD (default: oggi)")
@@ -33,7 +35,7 @@ def main() -> int:
     try:
         if args.command == "collect":
             sources = load_sources(args.sources)
-            result = collect(sources, store)
+            result = collect(sources, store, HttpClient(timeout=args.timeout))
             logging.info(
                 "Completato: %d nuovi, %d ignorati, %d fonti fallite",
                 result.added,

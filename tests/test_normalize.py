@@ -25,3 +25,27 @@ def test_normalizes_article_and_strips_html_and_fragment():
 def test_rejects_entry_without_url():
     assert normalize_article({"title": "No link"}, "Example", "feed") is None
 
+
+def test_removes_tracking_parameters_and_sorts_query():
+    article = normalize_article(
+        {
+            "title": "Tracked",
+            "link": "HTTPS://EXAMPLE.COM/story?z=2&utm_source=rss&fbclid=abc&a=1#top",
+        },
+        "Example",
+        "feed",
+    )
+
+    assert article is not None
+    assert article.url == "https://example.com/story?a=1&z=2"
+
+
+def test_keeps_non_tracking_parameters_including_blank_values():
+    article = normalize_article(
+        {"title": "Query", "link": "https://example.com/story?page=2&filter=&gclid=x"},
+        "Example",
+        "feed",
+    )
+
+    assert article is not None
+    assert article.url == "https://example.com/story?filter=&page=2"

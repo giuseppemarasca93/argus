@@ -47,7 +47,9 @@ python -m argus collect
 python -m argus report
 ```
 
-La raccolta salva gli articoli in `data/argus.db`; il report crea `reports/YYYY-MM-DD.md` con gli articoli acquisiti in quel giorno. L'URL canonico dell'articolo è univoco, quindi raccolte successive non producono duplicati.
+Il client HTTP usa lo User-Agent `Argus/0.1` e un timeout di 15 secondi. Il timeout può essere modificato, per esempio con `python -m argus collect --timeout 30`.
+
+La raccolta salva gli articoli in `data/argus.db`; il report crea `reports/YYYY-MM-DD.md` con gli articoli acquisiti in quel giorno. L'URL canonico dell'articolo è univoco: fragment e parametri di tracking comuni vengono rimossi, mentre gli altri parametri sono conservati e ordinati. Raccolte successive non producono duplicati.
 
 Percorsi e data possono essere personalizzati:
 

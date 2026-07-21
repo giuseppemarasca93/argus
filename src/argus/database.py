@@ -36,27 +36,39 @@ class ArticleStore:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
 
-    def add(self, article: Article) -> bool:
+    def add_many(self, articles: list[Article]) -> tuple[int, int]:
+        """Insert a source batch in one transaction and return (added, duplicates)."""
+        if not articles:
+            return 0, 0
         with self.connect() as connection:
-            cursor = connection.execute(
+            before = connection.total_changes
+            connection.executemany(
                 """
                 INSERT OR IGNORE INTO articles (
                     source_name, source_url, title, url, author,
                     published_at, summary, collected_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    article.source_name,
-                    article.source_url,
-                    article.title,
-                    article.url,
-                    article.author,
-                    article.published_at,
-                    article.summary,
-                    article.collected_at,
-                ),
+                [
+                    (
+                        article.source_name,
+                        article.source_url,
+                        article.title,
+                        article.url,
+                        article.author,
+                        article.published_at,
+                        article.summary,
+                        article.collected_at,
+                    )
+                    for article in articles
+                ],
             )
-            return cursor.rowcount == 1
+            added = connection.total_changes - before
+        return added, len(articles) - added
+
+    def add(self, article: Article) -> bool:
+        added, _ = self.add_many([article])
+        return added == 1
 
     def collected_on(self, day: str) -> list[sqlite3.Row]:
         with self.connect() as connection:
@@ -68,4 +80,3 @@ class ArticleStore:
                 """,
                 (day,),
             ).fetchall()
-

@@ -7,3 +7,9 @@ dist/
 data/
 logs/
 .DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+data/*.db

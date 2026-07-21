@@ -1,0 +1,8 @@
+sources:
+  - name: Canary Media
+    url: https://www.canarymedia.com/rss
+  - name: CleanTechnica
+    url: https://cleantechnica.com/feed/
+  - name: Carbon Brief
+    url: https://www.carbonbrief.org/feed/
+

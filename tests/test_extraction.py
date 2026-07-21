@@ -1,3 +1,4 @@
+from copy import deepcopy
 from datetime import datetime, timezone
 
 import pytest
@@ -13,7 +14,10 @@ RULES = {
         "batteries": ["batteries", "battery", "energy storage"],
     },
     "company": {"tesla": ["Tesla"], "form energy": ["Form Energy"]},
-    "technology": {"direct air capture": ["direct air capture", "DAC"]},
+    "technology": {
+        "direct air capture": ["direct air capture", "DAC"],
+        "green hydrogen": ["green hydrogen"],
+    },
     "problem": {"shortage": ["shortage", "shortages"]},
     "market_signal": {
         "funding": ["funding", "raised", "secured funding"],
@@ -124,10 +128,11 @@ def test_limit_restricts_processed_articles(tmp_path):
     article_id(store, article("Tesla", url="https://example.com/1"))
     article_id(store, article("Tesla", url="https://example.com/2"))
 
-    result = run_extraction(store, RulesExtractor(RULES), limit=1)
+    extractor = RulesExtractor(RULES)
+    result = run_extraction(store, extractor, limit=1)
 
     assert result.processed == 1
-    assert len(store.articles_without_evidence()) == 1
+    assert len(store.articles_without_evidence(extractor.name, extractor.fingerprint)) == 1
 
 
 def test_limit_must_be_positive(tmp_path):
@@ -156,3 +161,79 @@ def test_loads_repository_rules():
 
     assert "solar" in rules["topic"]
     assert "funding" in rules["market_signal"]
+
+
+def test_semantic_rule_change_reprocesses_and_replaces_stale_evidence(tmp_path):
+    store = ArticleStore(tmp_path / "argus.db")
+    store.initialize()
+    item_id = article_id(store, article("Battery factory"))
+    old_extractor = RulesExtractor(RULES)
+    run_extraction(store, old_extractor)
+    manual = Evidence(item_id, "company", "Curated Co", "curated co", 1.0, "manual-v1", NOW.isoformat())
+    store.add_evidence_many([manual])
+
+    changed_rules = deepcopy(RULES)
+    changed_rules["topic"] = {"energy systems": ["battery"]}
+    new_extractor = RulesExtractor(changed_rules)
+    result = run_extraction(store, new_extractor)
+    topics = [row for row in store.evidence_for_article(item_id) if row["evidence_type"] == "topic"]
+
+    assert old_extractor.fingerprint != new_extractor.fingerprint
+    assert result.processed == 1
+    assert [row["normalized_value"] for row in topics] == ["energy systems"]
+    assert topics[0]["rules_fingerprint"] == new_extractor.fingerprint
+    assert any(row["extractor"] == "manual-v1" for row in store.evidence_for_article(item_id))
+
+
+def test_equivalent_yaml_has_same_fingerprint_and_does_not_reprocess(tmp_path):
+    first_yaml = tmp_path / "first.yaml"
+    second_yaml = tmp_path / "second.yaml"
+    first_yaml.write_text(
+        """
+topic: {batteries: [battery]}
+company: {tesla: [Tesla]}
+technology: {green hydrogen: [green hydrogen]}
+problem: {shortage: [shortage]}
+market_signal: {funding: [raised]}
+""",
+        encoding="utf-8",
+    )
+    second_yaml.write_text(
+        """
+market_signal:
+  funding:
+    - raised
+problem: {shortage: [shortage]}
+technology: {green hydrogen: [green hydrogen]}
+company: {tesla: [Tesla]}
+topic:
+  batteries:
+    - battery
+""",
+        encoding="utf-8",
+    )
+    first = RulesExtractor(load_rules(first_yaml))
+    second = RulesExtractor(load_rules(second_yaml))
+    store = ArticleStore(tmp_path / "argus.db")
+    store.initialize()
+    article_id(store, article("Battery factory"))
+
+    assert first.fingerprint == second.fingerprint
+    assert run_extraction(store, first).processed == 1
+    assert run_extraction(store, second).processed == 0
+
+
+def test_phrase_does_not_match_across_title_and_summary():
+    evidence = RulesExtractor(RULES).extract(1, "Green", "hydrogen project", NOW)
+
+    assert "green hydrogen" not in values(evidence, "technology")
+
+
+@pytest.mark.parametrize(
+    ("title", "summary"),
+    [("Green hydrogen project", None), ("Project", "Uses green hydrogen today")],
+)
+def test_phrase_still_matches_inside_a_single_field(title, summary):
+    evidence = RulesExtractor(RULES).extract(1, title, summary, NOW)
+
+    assert "green hydrogen" in values(evidence, "technology")

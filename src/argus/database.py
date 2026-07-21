@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS evidence (
     confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
     extractor TEXT NOT NULL CHECK (length(trim(extractor)) > 0),
     created_at TEXT NOT NULL,
+    rules_fingerprint TEXT,
     UNIQUE (article_id, evidence_type, normalized_value, extractor)
 );
 CREATE INDEX IF NOT EXISTS idx_evidence_type_value
@@ -39,6 +40,7 @@ CREATE TABLE IF NOT EXISTS article_extractions (
     extractor TEXT NOT NULL,
     processed_at TEXT NOT NULL,
     evidence_count INTEGER NOT NULL CHECK (evidence_count >= 0),
+    rules_fingerprint TEXT,
     PRIMARY KEY (article_id, extractor)
 );
 """
@@ -58,6 +60,19 @@ class ArticleStore:
     def initialize(self) -> None:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
+            self._migrate_02_schema(connection)
+
+    @staticmethod
+    def _migrate_02_schema(connection: sqlite3.Connection) -> None:
+        evidence_columns = {row["name"] for row in connection.execute("PRAGMA table_info(evidence)")}
+        if "rules_fingerprint" not in evidence_columns:
+            connection.execute("ALTER TABLE evidence ADD COLUMN rules_fingerprint TEXT")
+
+        extraction_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(article_extractions)")
+        }
+        if "rules_fingerprint" not in extraction_columns:
+            connection.execute("ALTER TABLE article_extractions ADD COLUMN rules_fingerprint TEXT")
 
     def add_many(self, articles: list[Article]) -> tuple[int, int]:
         """Insert a source batch in one transaction and return (added, duplicates)."""
@@ -106,17 +121,20 @@ class ArticleStore:
 
     def articles_without_evidence(
         self,
-        extractor: str = "rules-v1",
+        extractor: str,
+        rules_fingerprint: str,
         limit: int | None = None,
     ) -> list[sqlite3.Row]:
         query = """
             SELECT a.* FROM articles a
             LEFT JOIN article_extractions x
-                ON x.article_id = a.id AND x.extractor = ?
+                ON x.article_id = a.id
+                AND x.extractor = ?
+                AND x.rules_fingerprint = ?
             WHERE x.article_id IS NULL
             ORDER BY a.id
         """
-        parameters: list[object] = [extractor]
+        parameters: list[object] = [extractor, rules_fingerprint]
         if limit is not None:
             query += " LIMIT ?"
             parameters.append(limit)
@@ -145,6 +163,7 @@ class ArticleStore:
         extractor: str,
         evidence: list[Evidence],
         processed_at: str,
+        rules_fingerprint: str,
         force: bool = False,
     ) -> int:
         """Persist one extraction atomically, replacing only this extractor on force."""
@@ -154,16 +173,27 @@ class ArticleStore:
                     "DELETE FROM evidence WHERE article_id = ? AND extractor = ?",
                     (article_id, extractor),
                 )
+            else:
+                connection.execute(
+                    """
+                    DELETE FROM evidence
+                    WHERE article_id = ? AND extractor = ?
+                        AND rules_fingerprint IS NOT ?
+                    """,
+                    (article_id, extractor, rules_fingerprint),
+                )
             added = self._insert_evidence(connection, evidence)
             connection.execute(
                 """
-                INSERT INTO article_extractions (article_id, extractor, processed_at, evidence_count)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO article_extractions (
+                    article_id, extractor, processed_at, evidence_count, rules_fingerprint
+                ) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(article_id, extractor) DO UPDATE SET
                     processed_at = excluded.processed_at,
-                    evidence_count = excluded.evidence_count
+                    evidence_count = excluded.evidence_count,
+                    rules_fingerprint = excluded.rules_fingerprint
                 """,
-                (article_id, extractor, processed_at, len(evidence)),
+                (article_id, extractor, processed_at, len(evidence), rules_fingerprint),
             )
         return added
 
@@ -174,8 +204,8 @@ class ArticleStore:
             """
             INSERT OR IGNORE INTO evidence (
                 article_id, evidence_type, value, normalized_value,
-                confidence, extractor, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                confidence, extractor, created_at, rules_fingerprint
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -186,6 +216,7 @@ class ArticleStore:
                     item.confidence,
                     item.extractor,
                     item.created_at,
+                    item.rules_fingerprint,
                 )
                 for item in evidence
             ],

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -21,6 +23,18 @@ def normalize_value(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip().lower()
 
 
+def rules_fingerprint(rules: dict[str, dict[str, list[str]]]) -> str:
+    canonical = {
+        evidence_type: {
+            normalize_value(value): sorted({normalize_value(term) for term in terms})
+            for value, terms in values.items()
+        }
+        for evidence_type, values in rules.items()
+    }
+    payload = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def load_rules(path: str | Path) -> dict[str, dict[str, list[str]]]:
     try:
         with Path(path).open(encoding="utf-8") as stream:
@@ -40,7 +54,7 @@ def load_rules(path: str | Path) -> dict[str, dict[str, list[str]]]:
             normalized = normalize_value(str(canonical))
             if not normalized or not isinstance(terms, list) or not terms:
                 raise ValueError(f"Regola non valida in '{evidence_type}': {canonical}")
-            cleaned_terms = [str(term).strip() for term in terms if str(term).strip()]
+            cleaned_terms = [normalize_value(str(term)) for term in terms if normalize_value(str(term))]
             if len(cleaned_terms) != len(terms):
                 raise ValueError(f"Sinonimi non validi per '{canonical}'")
             rules[evidence_type][normalized] = cleaned_terms
@@ -52,6 +66,7 @@ class RulesExtractor:
 
     def __init__(self, rules: dict[str, dict[str, list[str]]]) -> None:
         self.rules = rules
+        self.fingerprint = rules_fingerprint(rules)
 
     def extract(
         self,
@@ -60,13 +75,14 @@ class RulesExtractor:
         summary: str | None,
         created_at: datetime | None = None,
     ) -> list[Evidence]:
-        text = " ".join(part for part in (title, summary) if part)
         timestamp = (created_at or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
         found: list[Evidence] = []
 
         for evidence_type in EVIDENCE_TYPES:
             for canonical, terms in self.rules[evidence_type].items():
-                match = self._first_match(text, terms)
+                match = self._first_match(title, terms)
+                if match is None and summary:
+                    match = self._first_match(summary, terms)
                 if match is None:
                     continue
                 matched_text, configured_term = match
@@ -79,6 +95,7 @@ class RulesExtractor:
                         confidence=self._confidence(canonical, configured_term),
                         extractor=self.name,
                         created_at=timestamp,
+                        rules_fingerprint=self.fingerprint,
                     )
                 )
         return found
@@ -119,7 +136,11 @@ def run_extraction(
     if limit is not None and limit <= 0:
         raise ValueError("--limit deve essere maggiore di zero")
     store.initialize()
-    articles = store.articles(limit) if force else store.articles_without_evidence(extractor.name, limit)
+    articles = (
+        store.articles(limit)
+        if force
+        else store.articles_without_evidence(extractor.name, extractor.fingerprint, limit)
+    )
     result = ExtractionResult()
 
     for article in articles:
@@ -127,7 +148,12 @@ def run_extraction(
             processed_at = datetime.now(timezone.utc)
             evidence = extractor.extract(article["id"], article["title"], article["summary"], processed_at)
             result.created += store.save_extraction(
-                article["id"], extractor.name, evidence, processed_at.isoformat(), force
+                article["id"],
+                extractor.name,
+                evidence,
+                processed_at.isoformat(),
+                extractor.fingerprint,
+                force,
             )
             result.processed += 1
             if not evidence:

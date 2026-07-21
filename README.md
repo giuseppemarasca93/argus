@@ -67,6 +67,8 @@ python -m argus evidence-report --output reports/evidence.md
 
 `--force` ricalcola esclusivamente le evidenze prodotte dall'extractor deterministico `rules-v1`; eventuali evidenze di altri extractor restano intatte. L'evidence report mostra conteggi, valori più frequenti e fino a cinque articoli collegati per valore.
 
+Argus calcola un fingerprint SHA-256 dalla rappresentazione canonica delle regole normalizzate, non dai byte del file YAML. Se la semantica delle regole cambia, gli articoli vengono rielaborati automaticamente e le precedenti evidenze di `rules-v1` vengono sostituite; modifiche di formattazione o ordine delle chiavi non causano rielaborazioni. `--force` ricalcola comunque tutte le evidenze di `rules-v1` selezionate, senza toccare quelle di altri extractor.
+
 Percorsi e data possono essere personalizzati:
 
 ```bash

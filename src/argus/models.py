@@ -22,3 +22,4 @@ class Evidence:
     confidence: float
     extractor: str
     created_at: str
+    rules_fingerprint: str | None = None
